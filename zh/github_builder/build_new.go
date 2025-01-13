@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
 	"bufio"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,15 +11,24 @@ import (
 	"strings"
 )
 
-// 开发者 GitHub token
-const token = ""
+// 从环境变量获取 GitHub token
+var token = os.Getenv("GITHUB_TOKEN")
 
 // 定义一个访问者结构体
 type Visitor struct{}
 
-func (self *Visitor) md2html(arg map[string]string) error {
+func (v *Visitor) md2html(arg map[string]string) error {
+	// 检查 token 是否为空
+	if token == "" {
+		fmt.Println("错误：未设置 GITHUB_TOKEN 环境变量")
+		os.Exit(1)
+	}
+
 	from := arg["from"]
 	to := arg["to"]
+
+	fmt.Printf("处理目录：%s -> %s\n", from, to)
+
 	s := `<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 `
 	err := filepath.Walk(from+"/", func(path string, f os.FileInfo, err error) error {
@@ -36,12 +45,15 @@ func (self *Visitor) md2html(arg map[string]string) error {
 			return nil
 		}
 
+		fmt.Printf("处理文件：%s\n", path)
+
 		file, err := os.Open(path)
 		if err != nil {
+			fmt.Printf("打开文件失败：%v\n", err)
 			return err
 		}
 
-		input_byte, _ := ioutil.ReadAll(file)
+		input_byte, _ := io.ReadAll(file)
 		input := string(input_byte)
 		input = regexp.MustCompile(`\[(.*?)\]\(<?(.*?)\.md>?\)`).ReplaceAllString(input, "[$1](<$2.html>)")
 
@@ -61,7 +73,7 @@ func (self *Visitor) md2html(arg map[string]string) error {
 
 		var out *os.File
 		filename := strings.Replace(f.Name(), ".md", ".html", -1)
-		fmt.Println(to + "/" + filename)
+		fmt.Printf("生成文件：%s\n", to+"/"+filename)
 		if out, err = os.Create(to + "/" + filename); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating %s: %v", f.Name(), err)
 			os.Exit(-1)
@@ -71,35 +83,41 @@ func (self *Visitor) md2html(arg map[string]string) error {
 
 		req, err := http.NewRequest("POST", "https://api.github.com/markdown/raw", strings.NewReader(input))
 		if err != nil {
-			// handle error
+			fmt.Printf("创建请求失败：%v\n", err)
+			return err
 		}
 
 		req.Header.Set("Content-Type", "text/plain")
 		req.Header.Set("charset", "utf-8")
 		req.Header.Set("Authorization", "token "+token)
-		//
-		resp, err := client.Do(req)
-		if err!=nil {
-			fmt.Println("err:",err)
-		}
 
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("发送请求失败：%v\n", err)
+			return err
+		}
 		defer resp.Body.Close()
 
-		body, err := ioutil.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("GitHub API 返回错误：%s\n", string(body))
+			return fmt.Errorf("GitHub API 返回状态码：%d", resp.StatusCode)
+		}
+
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			// handle error
+			fmt.Printf("读取响应失败：%v\n", err)
+			return err
 		}
 
 		w := bufio.NewWriter(out)
-		n4, err := w.WriteString(s + string(body)) //m.Render()
-		fmt.Printf("wrote %d bytes\n", n4)
-		// fmt.Printf("wrote %d bytes\n", n4)
-		//使用 Flush 来确保所有缓存的操作已写入底层写入器。
-		w.Flush()
+		n4, err := w.WriteString(s + string(body))
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Parsing Error", err)
-			os.Exit(-1)
+			fmt.Printf("写入文件失败：%v\n", err)
+			return err
 		}
+		fmt.Printf("写入 %d 字节\n", n4)
+		w.Flush()
 
 		return nil
 	})
@@ -127,24 +145,30 @@ func RemoveImageLinkSuffix(input string) string {
 }
 
 func main() {
-	tmp := os.Getenv("TMP")
-	if tmp == "" {
-		tmp = "."
-	}
-
 	workdir := os.Getenv("WORKDIR")
 	if workdir == "" {
-		workdir = "."
+		workdir = ".."
 	}
+
+	// 使用本地的 output 目录
+	outputDir := filepath.Join(workdir, "output")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		fmt.Printf("创建输出目录失败：%v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("工作目录：%s\n", workdir)
+	fmt.Printf("输出目录：%s\n", outputDir)
 
 	arg := map[string]string{
 		"from": workdir,
-		"to":   tmp,
+		"to":   outputDir,
 	}
 
 	v := &Visitor{}
 	err := v.md2html(arg)
 	if err != nil {
-		fmt.Printf("filepath.Walk() returned %v\n", err)
+		fmt.Printf("处理失败：%v\n", err)
+		os.Exit(1)
 	}
 }

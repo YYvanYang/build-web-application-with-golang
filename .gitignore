@@ -13,3 +13,7 @@ _book
 
 # Folders
 .idea/
+
+
+.env
+output/
