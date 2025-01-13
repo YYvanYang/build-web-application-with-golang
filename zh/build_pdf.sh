@@ -66,8 +66,10 @@ pandoc -s --pdf-engine=xelatex \
   --toc \
   --toc-depth=2 \
   -V documentclass=report \
-  -V CJKmainfont="STSong" \
-  -V mainfont="Source Code Pro" \
+  -V CJKmainfont="Songti SC" \
+  -V CJKsansfont="PingFang SC" \
+  -V monofont="SF Mono" \
+  -V CJKmonofont="STFangsong" \
   -V geometry:margin=1in \
   --verbose \
   "$OUTPUT_DIR/"*.html -o build-web-application-with-golang.pdf
